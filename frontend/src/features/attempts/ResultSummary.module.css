@@ -1,0 +1,3 @@
+.summary { text-align: center; }
+.summary footer { justify-content: center; }
+.score { font-size: 3rem; font-weight: 700; margin: var(--space-2) 0; color: var(--primary); }
