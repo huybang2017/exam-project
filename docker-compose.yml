@@ -15,19 +15,5 @@ services:
       timeout: 3s
       retries: 20
 
-  api:
-    build: ./backend
-    environment:
-      DATABASE_URL: postgresql+asyncpg://exam:exam@db:5432/exam
-      SECRET_KEY: ${SECRET_KEY:-dev-only-change-me}
-      CACHE_ENABLED: ${CACHE_ENABLED:-true}
-      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
-      CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173"]'
-    depends_on:
-      db:
-        condition: service_healthy
-    ports:
-      - "8000:8000"
-
 volumes:
   pgdata:
