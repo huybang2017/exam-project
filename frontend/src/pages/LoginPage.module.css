@@ -1,0 +1,2 @@
+.wrapper { max-width: 380px; margin: 10vh auto 0; padding: 0 var(--space-4); }
+.wrapper form { display: flex; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-3); }
