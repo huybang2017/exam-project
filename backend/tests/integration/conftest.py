@@ -1,12 +1,29 @@
+import asyncio
 import os
-import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+
+import asyncpg
+
+# Test chạy trên PostgreSQL của docker-compose (docker compose up -d db) nhưng dùng database riêng
+# `exam_test`, được xoá và tạo lại mỗi lần chạy, nên không đụng vào dữ liệu thật trong database `exam`.
+PG_HOST = os.environ.get("TEST_PG_HOST", "localhost:5432")
+TEST_DB = "exam_test"
+
+
+async def _recreate_test_db() -> None:
+    conn = await asyncpg.connect(f"postgresql://exam:exam@{PG_HOST}/postgres")
+    try:
+        await conn.execute(f"DROP DATABASE IF EXISTS {TEST_DB} WITH (FORCE)")
+        await conn.execute(f"CREATE DATABASE {TEST_DB}")
+    finally:
+        await conn.close()
+
+
+asyncio.run(_recreate_test_db())
 
 # Phải đặt biến môi trường TRƯỚC khi import app (settings đọc lúc import).
-_tmp = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{(_tmp / 'test.db').as_posix()}"
+os.environ["DATABASE_URL"] = f"postgresql+asyncpg://exam:exam@{PG_HOST}/{TEST_DB}"
 os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["EXPIRY_SCAN_SECONDS"] = "3600"  # tắt vòng quét nền; test gọi trực tiếp khi cần
 os.environ["SECRET_KEY"] = "test-secret"
@@ -14,10 +31,11 @@ os.environ["SECRET_KEY"] = "test-secret"
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.database import SessionLocal  # noqa: E402
+from app.domain.entities import ROLE_TEACHER, User  # noqa: E402
+from app.infrastructure.db.engine import SessionLocal  # noqa: E402
+from app.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork  # noqa: E402
+from app.infrastructure.security.scrypt_hasher import ScryptHasher  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import User  # noqa: E402
-from app.security import hash_password  # noqa: E402
 
 
 def iso(dt: datetime) -> str:
@@ -47,10 +65,10 @@ def client():
 @pytest.fixture(scope="session")
 def teacher(client):
     async def create():
-        async with SessionLocal() as db:
-            db.add(User(username="teacher_t", full_name="GV Test", role="teacher",
-                        password_hash=hash_password("Teacher@123")))
-            await db.commit()
+        async with SqlAlchemyUnitOfWork(SessionLocal) as uow:
+            password_hash = await ScryptHasher().hash("Teacher@123")
+            await uow.users.add(User("teacher_t", "GV Test", ROLE_TEACHER, password_hash))
+            await uow.commit()
 
     client.portal.call(create)
     return headers(login(client, "teacher_t", "Teacher@123"))

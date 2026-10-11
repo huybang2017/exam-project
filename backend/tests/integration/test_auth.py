@@ -1,6 +1,7 @@
 import uuid
 
-from app import deps
+from app.infrastructure.config import settings
+from app.presentation.api.dependencies import login_rate_limiter
 
 from .conftest import headers, login
 
@@ -31,9 +32,9 @@ def test_t03_student_cannot_create_question(client, new_student):
 
 def test_t17_login_rate_limit(client, new_student, monkeypatch):
     username, _ = new_student()
-    monkeypatch.setattr(deps.settings, "rate_limit_enabled", True)
-    deps._login_hits.clear()
+    monkeypatch.setattr(settings, "rate_limit_enabled", True)
+    login_rate_limiter.reset()
     codes = [client.post("/api/auth/login", data={"username": username, "password": "sai"}).status_code for _ in range(11)]
-    deps._login_hits.clear()
+    login_rate_limiter.reset()
     assert codes[:10] == [401] * 10
     assert codes[10] == 429

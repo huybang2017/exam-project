@@ -2,9 +2,11 @@ from datetime import timedelta
 
 from sqlalchemy import update
 
-from app.database import SessionLocal
-from app.models import Attempt, utcnow
-from app.services.grading import auto_submit_expired
+from app.application.use_cases.attempts import AutoSubmitExpiredAttempts
+from app.infrastructure.clock import SystemClock
+from app.infrastructure.db.engine import SessionLocal
+from app.infrastructure.db.orm_models import AttemptORM
+from app.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
 
 from .conftest import make_exam, now_utc
 
@@ -123,11 +125,14 @@ def test_t15_expired_attempt_is_auto_submitted(client, exam, new_student):
     attempt_id = _answer_two_of_four(client, exam, student)
 
     async def expire_and_scan():
-        async with SessionLocal() as db:
-            await db.execute(update(Attempt).where(Attempt.id == attempt_id).values(deadline=utcnow() - timedelta(minutes=1)))
+        clock = SystemClock()
+        async with SessionLocal() as db:  # kéo lùi hạn nộp để giả lập bài đã quá giờ
+            await db.execute(
+                update(AttemptORM).where(AttemptORM.id == attempt_id).values(deadline=clock.now() - timedelta(minutes=1))
+            )
             await db.commit()
-        async with SessionLocal() as db:
-            return await auto_submit_expired(db)
+        async with SqlAlchemyUnitOfWork(SessionLocal) as uow:
+            return await AutoSubmitExpiredAttempts(uow, clock).execute()
 
     assert client.portal.call(expire_and_scan) >= 1
     result = client.get(f"/api/attempts/{attempt_id}/result", headers=student)

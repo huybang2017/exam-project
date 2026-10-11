@@ -1,7 +1,7 @@
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from app.routers import ws as ws_module
+from app.presentation.api.ws import exam_clock as ws_module
 
 from .conftest import login
 
