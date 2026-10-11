@@ -1,0 +1,6 @@
+.alert { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm); margin-bottom: var(--space-3); }
+.danger { background: var(--danger-bg); color: var(--danger); }
+.success { background: var(--success-bg); color: var(--success); }
+.warning { background: var(--warning-bg); color: var(--warning); }
+.info { background: var(--info-bg); color: var(--info); }
+.close { background: none; border: 0; color: inherit; font-size: 1.2rem; cursor: pointer; line-height: 1; }
