@@ -7,11 +7,11 @@ import asyncio
 import sys
 from datetime import timedelta
 
-from sqlalchemy import func, select
-
-from app.database import SessionLocal, init_db
-from app.models import Choice, Exam, ExamQuestion, Question, User, utcnow
-from app.security import hash_password
+from app.domain.entities import ROLE_ADMIN, ROLE_STUDENT, ROLE_TEACHER, Choice, Exam, ExamItem, Question, User
+from app.infrastructure.clock import SystemClock
+from app.infrastructure.db.engine import SessionLocal, init_db
+from app.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
+from app.infrastructure.security.scrypt_hasher import ScryptHasher
 
 QUESTIONS = [
     ("FastAPI chạy trên chuẩn giao tiếp web nào?", ["WSGI", "ASGI", "CGI", "FastCGI"], 1),
@@ -33,36 +33,32 @@ QUESTIONS = [
 
 async def seed(n_students: int = 50) -> None:
     await init_db()
-    async with SessionLocal() as db:
-        if (await db.execute(select(func.count()).select_from(User))).scalar_one() > 0:
+    hasher = ScryptHasher()
+    async with SqlAlchemyUnitOfWork(SessionLocal) as uow:
+        if await uow.users.count() > 0:
             print("CSDL đã có dữ liệu, bỏ qua.")
             return
 
-        admin = User(username="admin01", full_name="Quản trị viên", role="admin",
-                     password_hash=hash_password("Admin@123"))
-        teacher = User(username="teacher01", full_name="Giáo viên Mẫu", role="teacher",
-                       password_hash=hash_password("Teacher@123"))
-        student_hash = hash_password("Student@123")  # băm một lần, dùng chung cho dữ liệu mẫu
-        students = [User(username=f"student{i:02d}", full_name=f"Sinh viên {i:02d}", role="student",
-                         password_hash=student_hash) for i in range(1, n_students + 1)]
-        db.add_all([admin, teacher, *students])
-        await db.flush()
+        await uow.users.add(User("admin01", "Quản trị viên", ROLE_ADMIN, await hasher.hash("Admin@123")))
+        teacher = await uow.users.add(User("teacher01", "Giáo viên Mẫu", ROLE_TEACHER, await hasher.hash("Teacher@123")))
+        student_hash = await hasher.hash("Student@123")  # băm một lần, dùng chung cho dữ liệu mẫu
+        for i in range(1, n_students + 1):
+            await uow.users.add(User(f"student{i:02d}", f"Sinh viên {i:02d}", ROLE_STUDENT, student_hash))
 
-        questions = []
-        for content, choices, correct in QUESTIONS:
-            q = Question(content=content, owner_id=teacher.id,
-                         choices=[Choice(text=t, is_correct=(i == correct)) for i, t in enumerate(choices)])
-            questions.append(q)
-        db.add_all(questions)
-        await db.flush()
+        questions = [
+            await uow.questions.add(
+                Question(content, teacher.id, [Choice(t, is_correct=(i == correct)) for i, t in enumerate(choices)])
+            )
+            for content, choices, correct in QUESTIONS
+        ]
 
-        now = utcnow()
-        exam = Exam(title="Kiểm tra FastAPI cơ bản", description="10 câu trắc nghiệm, 15 phút",
-                    duration_minutes=15, start_time=now - timedelta(hours=1), end_time=now + timedelta(days=30),
-                    is_published=True, owner_id=teacher.id,
-                    items=[ExamQuestion(question_id=q.id, position=i, points=1.0) for i, q in enumerate(questions)])
-        db.add(exam)
-        await db.commit()
+        now = SystemClock().now()
+        exam = await uow.exams.add(
+            Exam(title="Kiểm tra FastAPI cơ bản", description="10 câu trắc nghiệm, 15 phút", duration_minutes=15,
+                 start_time=now - timedelta(hours=1), end_time=now + timedelta(days=30), owner_id=teacher.id,
+                 is_published=True, items=[ExamItem(q.id, 1.0, i) for i, q in enumerate(questions)])
+        )
+        await uow.commit()
         print(f"Đã nạp: 1 admin, 1 giáo viên, {n_students} sinh viên, {len(questions)} câu hỏi, đề #{exam.id}.")
 
 
