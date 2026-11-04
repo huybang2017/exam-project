@@ -64,14 +64,14 @@ def auth(token: str) -> dict:
 
 
 async def login(client, stats, username: str, password: str, name: str = "login") -> str | None:
-    r = await timed(client, stats, name, "POST", "/api/v1/auth/login", data={"username": username, "password": password})
+    r = await timed(client, stats, name, "POST", "/api/auth/login", data={"username": username, "password": password})
     return r.json()["access_token"] if r is not None and r.status_code == 200 else None
 
 
 # ---------------------------------------------------------------- io
 async def scenario_io(base: str, n: int) -> None:
     async with httpx.AsyncClient(base_url=base, timeout=60, limits=httpx.Limits(max_connections=n + 10)) as client:
-        for path in ("/api/v1/demo/sync-io", "/api/v1/demo/async-io"):
+        for path in ("/api/demo/sync-io", "/api/demo/async-io"):
             stats = Stats()
             start = time.perf_counter()
             await asyncio.gather(*(timed(client, stats, path.rsplit("/", 1)[1], "GET", path) for _ in range(n)))
@@ -84,19 +84,19 @@ async def prepare(client, stats: Stats, users: int, template_exam_id: int):
     teacher = await login(client, stats, "teacher01", "Teacher@123", name="login-teacher")
     if teacher is None:
         raise SystemExit("Không đăng nhập được teacher01 - đã chạy `python -m app.seed` chưa?")
-    r = await client.get(f"/api/v1/exams/{template_exam_id}", headers=auth(teacher))
+    r = await client.get(f"/api/exams/{template_exam_id}", headers=auth(teacher))
     r.raise_for_status()
     template = r.json()
     now = datetime.now(UTC)
-    r = await client.post("/api/v1/exams", headers=auth(teacher), json={
+    r = await client.post("/api/exams", headers=auth(teacher), json={
         "title": f"Bench {now:%H:%M:%S}", "duration_minutes": 60,
         "start_time": (now - timedelta(minutes=5)).isoformat(), "end_time": (now + timedelta(days=1)).isoformat(),
         "items": [{"question_id": q["id"]} for q in template["questions"]],
     })
     r.raise_for_status()
     exam_id = r.json()["id"]
-    (await client.post(f"/api/v1/exams/{exam_id}/publish", headers=auth(teacher))).raise_for_status()
-    detail = (await client.get(f"/api/v1/exams/{exam_id}", headers=auth(teacher))).json()
+    (await client.post(f"/api/exams/{exam_id}/publish", headers=auth(teacher))).raise_for_status()
+    detail = (await client.get(f"/api/exams/{exam_id}", headers=auth(teacher))).json()
     correct = {c["id"] for q in detail["questions"] for c in q["choices"] if c["is_correct"]}
 
     tokens = await asyncio.gather(*(login(client, stats, f"student{i:02d}", "Student@123") for i in range(1, users + 1)))
@@ -108,7 +108,7 @@ async def prepare(client, stats: Stats, users: int, template_exam_id: int):
 # ---------------------------------------------------------------- exam
 async def one_student(client, stats: Stats, exam_id: int, idx: int, token: str, correct: set[int], mismatches: list):
     h = auth(token)
-    r = await timed(client, stats, "start", "POST", f"/api/v1/exams/{exam_id}/attempts", headers=h)
+    r = await timed(client, stats, "start", "POST", f"/api/exams/{exam_id}/attempts", headers=h)
     if r is None or r.status_code >= 400:
         return
     attempt = r.json()
@@ -117,8 +117,8 @@ async def one_student(client, stats: Stats, exam_id: int, idx: int, token: str, 
     step = max(1, len(picks) // 3)
     for i in range(0, len(picks), step):  # lưu dần như autosave thật
         chunk = [{"question_id": q, "choice_id": c} for q, c in picks[i:i + step]]
-        await timed(client, stats, "answers", "PUT", f"/api/v1/attempts/{attempt['id']}/answers", headers=h, json={"answers": chunk})
-    r = await timed(client, stats, "submit", "POST", f"/api/v1/attempts/{attempt['id']}/submit", headers=h)
+        await timed(client, stats, "answers", "PUT", f"/api/attempts/{attempt['id']}/answers", headers=h, json={"answers": chunk})
+    r = await timed(client, stats, "submit", "POST", f"/api/attempts/{attempt['id']}/submit", headers=h)
     if r is not None and r.status_code == 200:
         points = {q["id"]: q["points"] for q in qs}
         expected = round(sum(points[q] for q, c in picks if c in correct) / sum(points.values()) * 10, 2)
@@ -149,12 +149,12 @@ async def scenario_resume(base: str, users: int, repeat: int, template: int) -> 
         stats = Stats()
         exam_id, tokens, _ = await prepare(client, stats, users, template)
         stats.lat.clear()
-        starts = await asyncio.gather(*(client.post(f"/api/v1/exams/{exam_id}/attempts", headers=auth(t)) for t in tokens))
+        starts = await asyncio.gather(*(client.post(f"/api/exams/{exam_id}/attempts", headers=auth(t)) for t in tokens))
         attempts = [s.json()["id"] for s in starts]
 
         async def refresh(token: str, attempt_id: int):
             for _ in range(repeat):
-                await timed(client, stats, "get_attempt", "GET", f"/api/v1/attempts/{attempt_id}", headers=auth(token))
+                await timed(client, stats, "get_attempt", "GET", f"/api/attempts/{attempt_id}", headers=auth(token))
 
         start = time.perf_counter()
         await asyncio.gather(*(refresh(t, a) for t, a in zip(tokens, attempts)))
@@ -170,7 +170,7 @@ async def scenario_ws(base: str, users: int, hold: float, template: int) -> None
     async with httpx.AsyncClient(base_url=base, timeout=120, limits=limits) as client:
         stats = Stats()
         exam_id, tokens, _ = await prepare(client, stats, users, template)
-        starts = await asyncio.gather(*(client.post(f"/api/v1/exams/{exam_id}/attempts", headers=auth(t)) for t in tokens))
+        starts = await asyncio.gather(*(client.post(f"/api/exams/{exam_id}/attempts", headers=auth(t)) for t in tokens))
         attempts = [s.json()["id"] for s in starts]
     ws_base = base.replace("http://", "ws://").replace("https://", "wss://")
     counts: list[int] = []
